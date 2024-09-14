@@ -1,13 +1,23 @@
+import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import business_layer
-from business_layer.business import train_model, load_model, predict_survival
+import business_layer.business as business
 
 app = FastAPI()
 
+# Enable CORS for all origins
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
+
+
 class TrainRequest(BaseModel):
-    model: str = "logistic_regression"  # Default to logistic regression
-    params: dict = {}  # Parameters for the model
+    model: str  # Only model to use
 
 
 class PredictRequest(BaseModel):
@@ -16,20 +26,14 @@ class PredictRequest(BaseModel):
     age: float
     sibsp: int
     fare: float
+    embarked: str
+    parch: int  # Add missing 'parch' field
 
 
 @app.post("/train")
 async def train(request: TrainRequest):
-    """
-    Endpoint to train a model.
-    Accepts JSON with a 'model' key to specify the algorithm
-    and additional parameters to be passed to the model.
-    """
     algorithm = request.model
-    params = request.params
-
-    # Train the model with specified parameters
-    result = train_model(algorithm, **params)
+    result = business.train_model(algorithm)
     if 'error' in result:
         raise HTTPException(status_code=400, detail=result['error'])
     return result
@@ -37,29 +41,26 @@ async def train(request: TrainRequest):
 
 @app.post("/predict")
 async def predict(request: PredictRequest):
-    """
-    Endpoint to predict survival based on input features.
-    The model must be trained first using the /train endpoint.
-    """
-    # Convert input features
-    try:
-        pclass = int(request.pclass)
-        sex = 0 if request.sex.lower() == 'male' else 1
-        age = float(request.age)
-        sibsp = int(request.sibsp)
-        fare = float(request.fare)
-    except (KeyError, ValueError) as e:
-        raise HTTPException(status_code=400, detail="Invalid input data.")
+    # Updated input_data with the 'parch' field
+    input_data = {
+        'pclass': int(request.pclass),
+        'sex': request.sex,
+        'age': float(request.age),
+        'sibsp': int(request.sibsp),
+        'fare': float(request.fare),
+        'embarked': request.embarked,
+        'parch': int(request.parch)  # Add 'parch' to input data
+    }
 
-    # Load the model (in case it hasn't been loaded yet)
-    load_model()
-
-    # Prepare the input data for prediction
-    input_data = [pclass, sex, age, sibsp, fare]
-    result = predict_survival(input_data)
+    # Load model and make prediction
+    business.load_model()
+    result = business.predict_survival(input_data)
 
     if 'error' in result:
         raise HTTPException(status_code=400, detail=result['error'])
+
     return result
 
-# Run with: uvicorn main:app --reload
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8040)
